@@ -1,0 +1,246 @@
+import { chromium } from "playwright";
+import fs from "fs";
+import os from "os";
+import path from "path";
+
+const NEW_LISTING_URL = "https://www.subito.it/vendere/";
+
+type ListingInput = {
+  title: string;
+  description: string;
+  price: number;
+  imageUrls: string[];
+  condition?: string | null;
+  location?: string | null;
+};
+
+type PublishResult = {
+  success: boolean;
+  platformListingId?: string;
+  platformUrl?: string;
+  error?: string;
+  requiresManualStep?: boolean;
+};
+
+async function downloadImage(url: string, index: number): Promise<string> {
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Impossibile scaricare immagine ${index + 1}`);
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+
+  const contentType = response.headers.get("content-type") || "";
+  let ext = ".jpg";
+
+  if (contentType.includes("png")) ext = ".png";
+  if (contentType.includes("webp")) ext = ".webp";
+  if (contentType.includes("jpeg")) ext = ".jpg";
+
+  const filePath = path.join(
+    os.tmpdir(),
+    `mttech-subito-${Date.now()}-${index}${ext}`
+  );
+
+  fs.writeFileSync(filePath, buffer);
+
+  return filePath;
+}
+
+export class SubitoRealAdapter {
+  async publishListing(listing: ListingInput): Promise<PublishResult> {
+    const userDataDir =
+      process.env.SUBITO_PROFILE_DIR ||
+      path.resolve(process.cwd(), "pw-profile");
+
+    const context = await chromium.launchPersistentContext(userDataDir, {
+      channel: "chrome",
+      headless: false,
+    });
+
+    const page = context.pages()[0] || (await context.newPage());
+    const tempFiles: string[] = [];
+
+    try {
+      await page.goto(NEW_LISTING_URL, {
+        waitUntil: "domcontentloaded",
+        timeout: 60000,
+      });
+
+      if (
+        page.url().includes("login") ||
+        (await page.getByText("Accedi", { exact: true }).count())
+      ) {
+        return {
+          success: false,
+          requiresManualStep: true,
+          error: "Sessione Subito non autenticata. Effettua prima il login.",
+        };
+      }
+
+      await page.locator("#ad_name").waitFor({
+        state: "visible",
+        timeout: 30000,
+      });
+
+      await page.locator("#ad_name").fill(listing.title);
+      await page.waitForTimeout(1200);
+
+      const suggestion = page
+        .locator("#suggestions-autocomplete li")
+        .first();
+
+      if (await suggestion.count()) {
+        await suggestion.click();
+      }
+
+      await page.waitForURL(/inserimento\.subito\.it/, {
+        timeout: 30000,
+      });
+
+      for (let i = 0; i < listing.imageUrls.length; i++) {
+        const filePath = await downloadImage(listing.imageUrls[i], i);
+        tempFiles.push(filePath);
+      }
+
+      if (tempFiles.length > 0) {
+        await page.locator("#images-file-input").setInputFiles(tempFiles);
+      }
+
+      const titleField = page.locator("#title");
+
+      if (await titleField.count()) {
+        await titleField.fill(listing.title);
+      }
+
+      await page.locator("#description").fill(listing.description);
+
+      const conditionContainer = page
+        .locator("div.index-module_container__OwQ0j")
+        .first();
+
+      if (await conditionContainer.count()) {
+        await conditionContainer.click().catch(() => {});
+        await page.waitForTimeout(500);
+
+        const preferredCondition = page.getByRole("option", {
+          name: /Come nuovo|Ottime condizioni|Buone condizioni/i,
+        });
+
+        if (await preferredCondition.count()) {
+          await preferredCondition.first().click();
+        }
+      }
+
+      const location =
+        listing.location ||
+        process.env.SUBITO_LOCATION ||
+        "Palmi";
+
+      await page.locator("#location").fill(location);
+      await page.waitForTimeout(1000);
+
+      const locationSuggestion = page
+        .locator('[id^="autocomplete-location-item-"]')
+        .first();
+
+      if (await locationSuggestion.count()) {
+        await locationSuggestion.click();
+      }
+
+      await page
+        .locator("#price")
+        .fill(String(Math.round(listing.price)));
+
+      const publishButton = page.getByRole("button", {
+        name: /Pubblica annuncio/i,
+      });
+
+      if (!(await publishButton.count())) {
+        return {
+          success: false,
+          error: "Pulsante Pubblica annuncio non trovato.",
+        };
+      }
+
+      await publishButton.click();
+      await page.waitForTimeout(2000);
+
+      const currentUrl = page.url();
+      const match = currentUrl.match(/id:ad:([a-zA-Z0-9-]+)/);
+
+      if (match) {
+        return {
+          success: true,
+          platformListingId: match[1],
+          platformUrl: currentUrl,
+        };
+      }
+
+      const html = await page.content();
+
+      if (/captcha|challenge|verify/i.test(html)) {
+        return {
+          success: false,
+          requiresManualStep: true,
+          error: "Subito richiede una verifica manuale.",
+        };
+      }
+
+      return {
+        success: true,
+        platformUrl: currentUrl,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Errore sconosciuto durante la pubblicazione su Subito",
+      };
+    } finally {
+      for (const file of tempFiles) {
+        try {
+          fs.unlinkSync(file);
+        } catch {}
+      }
+
+      await context.close();
+    }
+  }
+}      
+return 
+{
+        success: false,
+        requiresManualStep: true,
+        error: "Selettori del form Subito non ancora configurati. Completa il form manualmente nella finestra aperta, poi conferma qui.",
+      };
+      // ---- FINE SEZIONE DA COMPLETARE ----
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : "Errore durante la pubblicazione su Subito",
+      };
+    }
+  }
+
+  async updateListing(platformListingId: string, payload: PlatformPayload): Promise<PublishResult> {
+    // Stessa logica di publishListing ma partendo dalla pagina di modifica
+    // dell'annuncio esistente. Da completare dopo, con lo stesso metodo (codegen).
+    return { success: false, requiresManualStep: true, error: "Non ancora implementato." };
+  }
+
+  async deleteListing(platformListingId: string): Promise<void> {
+    // Da completare con codegen: aprire l'annuncio e premere "Elimina".
+  }
+
+  async getListingStatus(platformListingId: string): Promise<ListingStatus> {
+    return "PENDING";
+  }
+
+  async close() {
+    await this.browser?.close();
+  }
+}

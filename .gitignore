@@ -1,0 +1,9 @@
+.env
+.env.local
+.env.*
+node_modules/
+.next/
+subito-profile/
+*.log
+.DS_Store
+apps/web/pw-profile/

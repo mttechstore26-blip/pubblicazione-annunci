@@ -1,0 +1,167 @@
+// Schema DB — v1
+// Postgres via Supabase. Naming: snake_case in DB, camelCase in Prisma Client.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "./generated/client"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum ProductStatus {
+  DRAFT // Bozza
+  TO_PUBLISH // Da pubblicare
+  PUBLISHED // Pubblicato
+  SOLD // Venduto
+  ARCHIVED // Archiviato
+}
+
+enum Platform {
+  SUBITO
+  VINTED
+}
+
+enum ListingStatus {
+  PENDING
+  PUBLISHED
+  FAILED
+  REMOVED
+}
+
+enum PublicationResult {
+  SUCCESS
+  FAILED
+  PARTIAL
+}
+
+// Prodotto reale in vendita. Un product genera N listing (uno per piattaforma).
+model Product {
+  id             String        @id @default(cuid())
+  title          String
+  description    String?
+  category       String?
+  subcategory    String?
+  brand          String?
+  model          String?
+  variant        String?
+  color          String?
+  condition      String? // es. "Ottime condizioni"
+  purchaseCost   Decimal?      @map("purchase_cost") @db.Decimal(10, 2)
+  suggestedPrice Decimal?      @map("suggested_price") @db.Decimal(10, 2)
+  salePrice      Decimal?      @map("sale_price") @db.Decimal(10, 2)
+  status         ProductStatus @default(DRAFT)
+
+  templateId String?          @map("template_id")
+  template   ProductTemplate? @relation(fields: [templateId], references: [id])
+
+  images        ProductImage[]
+  listings      Listing[]
+  aiAnalyses    AiAnalysis[]
+  historyEvents ProductHistoryEvent[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("products")
+}
+
+model ProductImage {
+  id        String   @id @default(cuid())
+  productId String   @map("product_id")
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  imageUrl  String   @map("image_url")
+  isCover   Boolean  @default(false) @map("is_cover")
+  order     Int
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([productId])
+  @@map("product_images")
+}
+
+// Un annuncio pubblicato/da pubblicare su una specifica piattaforma.
+model Listing {
+  id                String        @id @default(cuid())
+  productId         String        @map("product_id")
+  product           Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  platform          Platform
+  platformListingId String?       @map("platform_listing_id")
+  platformUrl       String?       @map("platform_url")
+  price             Decimal       @db.Decimal(10, 2)
+  status            ListingStatus @default(PENDING)
+  payload           Json? // payload trasformato specifico per la piattaforma (per idempotenza/debug)
+  idempotencyKey    String        @unique @map("idempotency_key")
+  lastError         String?       @map("last_error")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([productId])
+  @@index([platform, status])
+  @@map("listings")
+}
+
+model AiAnalysis {
+  id         String   @id @default(cuid())
+  productId  String   @map("product_id")
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  result     Json // output strutturato completo (campi + confidenza per campo)
+  confidence Float? // confidenza complessiva 0-1
+  aiModel    String   @map("ai_model")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([productId])
+  @@map("ai_analysis")
+}
+
+model PublicationLog {
+  id        String            @id @default(cuid())
+  listingId String?           @map("listing_id")
+  platform  Platform
+  result    PublicationResult
+  error     String?
+  timestamp DateTime          @default(now())
+
+  @@index([platform, timestamp])
+  @@map("publication_logs")
+}
+
+// "Modelli prodotto": memorizza come compiliamo di solito un dato modello ricorrente
+// (es. "Nintendo Switch OLED") per velocizzare le pubblicazioni successive.
+model ProductTemplate {
+  id                 String   @id @default(cuid())
+  brand              String
+  model              String
+  category           String
+  defaultAttributes  Json // attributi ricorrenti generici
+  subitoAttributes   Json?    @map("subito_attributes")
+  vintedAttributes   Json?    @map("vinted_attributes")
+  descriptionPattern String?  @map("description_pattern")
+  priceRangeMin      Decimal? @map("price_range_min") @db.Decimal(10, 2)
+  priceRangeMax      Decimal? @map("price_range_max") @db.Decimal(10, 2)
+  timesUsed          Int      @default(0) @map("times_used")
+
+  products Product[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([brand, model])
+  @@map("product_templates")
+}
+
+// Storico eventi per prodotto (creato, analizzato, pubblicato, venduto, ecc.)
+model ProductHistoryEvent {
+  id        String   @id @default(cuid())
+  productId String   @map("product_id")
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  eventType String   @map("event_type") // CREATED | ANALYZED | PUBLISHED_SUBITO | PUBLISHED_VINTED | EDITED | SOLD | REMOVED
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([productId])
+  @@map("product_history_events")
+}
