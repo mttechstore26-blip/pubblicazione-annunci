@@ -55,7 +55,6 @@ export function RecognitionResult({ result }: RecognitionResultProps) {
 
       <FieldRow label="Categoria" field={result.category} />
       <FieldRow label="Marca" field={result.brand} />
-      <FieldRow label="Modello" field={result.model} />
       <FieldRow label="Colore" field={result.color} />
       <FieldRow label="Condizione" field={result.cosmeticCondition} />
 

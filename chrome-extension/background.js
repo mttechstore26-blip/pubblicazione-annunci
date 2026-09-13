@@ -56,3 +56,48 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     console.error("❌ MT TECH injection:", error);
   });
 });
+
+function openVinted(listing, sendResponse) {
+  chrome.storage.local.set(
+    {
+      mttechVintedListing: listing,
+      mttechVintedPending: true,
+      mttechVintedStage: "starting",
+      mttechVintedSuccess: false,
+      mttechVintedItemId: null
+    },
+    () => {
+      chrome.tabs.create(
+        {
+          url: "https://www.vinted.it/items/new"
+        },
+        (tab) => {
+          if (sendResponse) {
+            sendResponse({
+              ok: true,
+              tabId: tab.id
+            });
+          }
+        }
+      );
+    }
+  );
+}
+
+chrome.runtime.onMessage.addListener(
+  (message, sender, sendResponse) => {
+    if (
+      message?.type !== "MTTECH_PUBLISH_VINTED"
+    ) {
+      return;
+    }
+
+    console.log(
+      "📨 MT TECH: richiesta Vinted ricevuta"
+    );
+
+    openVinted(message.listing, sendResponse);
+
+    return true;
+  }
+);

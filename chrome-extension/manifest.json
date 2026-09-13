@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MT TECH Publisher",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Pubblicazione automatica annunci MT TECH su Subito.",
   "permissions": [
     "storage",
@@ -14,7 +14,8 @@
     "https://www.subito.it/*",
     "https://inserimento.subito.it/*",
     "https://*.supabase.co/*",
-    "https://areariservata.subito.it/*"
+    "https://areariservata.subito.it/*",
+    "https://www.vinted.it/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -28,6 +29,15 @@
       ],
       "js": [
         "subito.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.vinted.it/*"
+      ],
+      "js": [
+        "vinted.js"
       ],
       "run_at": "document_idle"
     }

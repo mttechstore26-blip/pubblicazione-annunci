@@ -97,4 +97,10 @@ export const PRODUCT_CATALOG: CatalogEntry[] = [
     brand: "Dyson", model: "Aspirapolvere/Styler", category: "Elettrodomestico",
     aliases: ["dyson"], priceRange: { min: 150, max: 450 },
   },
+  {
+    brand: "Meta", model: "Quest 3S", category: "Cuffie VR",
+    aliases: ["meta quest 3s", "quest 3s", "oculus quest 3s"],
+    priceRange: { min: 220, max: 350 },
+  },
+
 ];

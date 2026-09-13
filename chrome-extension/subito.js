@@ -46,19 +46,59 @@ async function fillStartPage(listing) {
     return;
   }
 
-  await typeLikeHuman(input, listing.title);
+  let searchTitle = listing.title;
+
+  if (/meta\s+quest\s+3s/i.test(listing.title)) {
+    searchTitle = "Meta Quest";
+  }
+
+  console.log("MT TECH: ricerca iniziale Subito:", searchTitle);
+
+  await typeLikeHuman(input, searchTitle);
 
   await sleep(1800);
 
-  const elements = [...document.querySelectorAll("body *")];
+  let category = null;
 
-  const category = elements.find((el) => {
-    return (el.textContent || "").trim() === "Console e Videogiochi";
-  });
+  for (let i = 0; i < 20; i++) {
+    const elements = [...document.querySelectorAll("body *")];
+
+    category = elements.find((el) => {
+      return (el.textContent || "").trim() === "Console e Videogiochi";
+    });
+
+    if (category) break;
+
+    await sleep(300);
+  }
 
   if (category) {
     console.log("MT TECH: seleziono Console e Videogiochi");
-    category.click();
+
+    const clickable =
+      category.closest("a") ||
+      category.closest("li") ||
+      category.closest('[role="option"]') ||
+      category.closest("button") ||
+      category;
+
+    clickable.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        view: window
+      })
+    );
+
+    clickable.dispatchEvent(
+      new MouseEvent("mouseup", {
+        bubbles: true,
+        cancelable: true,
+        view: window
+      })
+    );
+
+    clickable.click();
   } else {
     console.warn("MT TECH: categoria non trovata");
   }
@@ -485,37 +525,114 @@ async function detectFinalConfirmation() {
 async function continueMinimumVisibility() {
   console.log("MT TECH: pagina promozione rilevata");
 
-  // Prima controlla se siamo già alla schermata finale.
   if (await detectFinalConfirmation()) {
     return;
   }
 
-  await sleep(1500);
+  async function waitAndClick(textWanted, maxTries = 30) {
+    const wanted = textWanted
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
 
-  const firstClick = await clickButtonByText(
+    for (let i = 0; i < maxTries; i++) {
+      const candidates = [
+        ...document.querySelectorAll(
+          'button, a, [role="button"], input[type="button"], input[type="submit"]'
+        )
+      ];
+
+      const target = candidates.find((el) => {
+        const text = (
+          el.innerText ||
+          el.textContent ||
+          el.value ||
+          ""
+        )
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase();
+
+        return text === wanted || text.includes(wanted);
+      });
+
+      if (target) {
+        console.log(
+          "MT TECH: trovato pulsante",
+          textWanted
+        );
+
+        target.scrollIntoView({
+          behavior: "instant",
+          block: "center"
+        });
+
+        await sleep(250);
+
+        target.dispatchEvent(
+          new MouseEvent("mousedown", {
+            bubbles: true,
+            cancelable: true,
+            view: window
+          })
+        );
+
+        target.dispatchEvent(
+          new MouseEvent("mouseup", {
+            bubbles: true,
+            cancelable: true,
+            view: window
+          })
+        );
+
+        target.click();
+
+        return true;
+      }
+
+      await sleep(500);
+    }
+
+    return false;
+  }
+
+  const firstClick = await waitAndClick(
     "Continua con visibilità minima"
   );
 
   if (!firstClick) {
-    console.warn("MT TECH: pulsante visibilità minima non trovato");
+    console.warn(
+      "MT TECH: pulsante visibilità minima non trovato dopo 15 secondi"
+    );
     return;
   }
 
-  console.log("MT TECH: visibilità minima selezionata");
+  console.log(
+    "✅ MT TECH: visibilità minima selezionata"
+  );
 
-  await sleep(1800);
+  await sleep(1200);
 
-  const secondClick = await clickButtonByText(
-    "Non mi interessa"
+  const secondClick = await waitAndClick(
+    "Non mi interessa",
+    30
   );
 
   if (!secondClick) {
-    console.warn("MT TECH: pulsante Non mi interessa non trovato");
+    console.warn(
+      "MT TECH: pulsante Non mi interessa non trovato"
+    );
     return;
   }
 
-  // Conserva subito l'ID dell'annuncio, ma NON dichiara ancora successo.
-  const match = location.href.match(/id:ad:([a-zA-Z0-9-]+)/);
+  console.log(
+    "✅ MT TECH: Non mi interessa selezionato"
+  );
+
+  const match = location.href.match(
+    /id:ad:([a-zA-Z0-9-]+)/
+  );
+
   const adId = match ? match[1] : null;
 
   await chrome.storage.local.set({
@@ -529,17 +646,38 @@ async function continueMinimumVisibility() {
     adId
   );
 
-  // Se la pagina cambia senza ricaricarsi, controlla per alcuni secondi.
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 40; i++) {
     await sleep(500);
 
     if (await detectFinalConfirmation()) {
       return;
     }
+
+    if (
+      location.hostname === "areariservata.subito.it" &&
+      location.pathname === "/annunci/inserito"
+    ) {
+      const params = new URLSearchParams(location.search);
+      const finalAdId = params.get("adId");
+
+      await chrome.storage.local.set({
+        mttechPending: false,
+        mttechStage: "completed",
+        mttechSubitoSuccess: true,
+        mttechSubitoAdId: finalAdId || adId
+      });
+
+      console.log(
+        "✅ MT TECH Subito: pubblicazione confermata",
+        finalAdId || adId
+      );
+
+      return;
+    }
   }
 
   console.log(
-    "MT TECH: conferma non ancora rilevata, verrà ricontrollata al caricamento pagina"
+    "MT TECH: conferma finale non ancora rilevata"
   );
 }
 
@@ -592,7 +730,37 @@ async function fillListingPage(listing) {
   await publishListing();
 }
 
+async function detectInsertedPage() {
+  if (
+    location.hostname !== "areariservata.subito.it" ||
+    location.pathname !== "/annunci/inserito"
+  ) {
+    return false;
+  }
+
+  const params = new URLSearchParams(location.search);
+  const adId = params.get("adId");
+
+  console.log(
+    "✅ MT TECH Subito: pubblicazione confermata da URL",
+    adId
+  );
+
+  await chrome.storage.local.set({
+    mttechPending: false,
+    mttechStage: "completed",
+    mttechSubitoSuccess: true,
+    mttechSubitoAdId: adId || null
+  });
+
+  return true;
+}
+
 async function run() {
+  if (await detectInsertedPage()) {
+    return;
+  }
+
   const {
     mttechListing,
     mttechPending

@@ -24,17 +24,46 @@ interface GeneratedListingText {
 // Template di descrizione semplice, per categoria. L'AI (in una fase
 // successiva) riscriverà questo testo in modo più naturale, ma la struttura
 // di base parte sempre da qui, così restiamo sempre "onesti" sui dati.
-function buildDescription(r: AiRecognitionResult): string {
-  const condizione = r.cosmeticCondition.value ?? "buone condizioni";
-  const accessori = r.accessoriesDetected.length > 0
-    ? r.accessoriesDetected.join(", ")
-    : null;
+function buildDescription(
+  r: AiRecognitionResult,
+  userTitle: string
+): string {
+  const normalized = userTitle.toLowerCase();
 
-  let text = `${[r.brand.value, r.model.value].filter(Boolean).join(" ")} in ${condizione}.\n`;
+  // Template specifico Xbox Series S
+  if (
+    normalized.includes("xbox serie s") ||
+    normalized.includes("xbox series s")
+  ) {
+    return `Xbox Series S in ottime condizioni, perfettamente funzionante.
+
+La console viene venduta completa di:
+
+- Controller originale Xbox
+- Cavo di alimentazione
+- Cavo HDMI
+
+Console testata e pronta all’uso.`;
+  }
+
+  const condizione =
+    r.cosmeticCondition.value ?? "buone condizioni";
+
+  const productName =
+    userTitle.trim() ||
+    [r.brand.value, r.model.value]
+      .filter(Boolean)
+      .join(" ");
+
+  let text = `${productName} in ${condizione}.\n`;
   text += "Perfettamente funzionante e testato.\n";
 
-  if (accessori) {
-    text += `\nInclusi: ${accessori}.\n`;
+  if (r.accessoriesDetected.length > 0) {
+    text += "\nInclusi:\n";
+
+    for (const accessorio of r.accessoriesDetected) {
+      text += `- ${accessorio}\n`;
+    }
   }
 
   if (r.visibleDefects.length > 0) {
@@ -42,27 +71,40 @@ function buildDescription(r: AiRecognitionResult): string {
   }
 
   text += "\nSpedizione disponibile.";
+
   return text;
 }
 
 export function generateListingText(input: GenerateListingInput): GeneratedListingText {
   const { recognition, userTitle } = input;
 
-  const productName = [recognition.brand.value, recognition.model.value]
-    .filter(Boolean)
-    .join(" ") || userTitle;
+  const normalized = userTitle.toLowerCase();
 
-  const condizione = recognition.cosmeticCondition.value;
+  let subitoTitle: string;
+  let vintedTitle: string;
 
-  // Subito: titolo più lungo, può includere "completo di accessori" ecc.
-  const subitoTitle = condizione
-    ? `${productName} - ${condizione}`.slice(0, 60)
-    : productName.slice(0, 60);
+  if (
+    normalized.includes("xbox serie s") ||
+    normalized.includes("xbox series s")
+  ) {
+    subitoTitle = "Xbox Serie S";
+    vintedTitle = "Xbox Serie S";
+  } else {
+    // Per gli altri prodotti manteniamo come base il titolo scritto
+    // dall'utente, evitando titoli generici come "Microsoft Xbox".
+    subitoTitle = userTitle.trim().slice(0, 60);
+    vintedTitle = userTitle.trim().slice(0, 40);
+  }
 
-  // Vinted: titolo corto e diretto.
-  const vintedTitle = productName.slice(0, 40);
+  const description = buildDescription(
+    recognition,
+    userTitle
+  );
 
-  const description = buildDescription(recognition);
-
-  return { subitoTitle, vintedTitle, description };
+  return {
+    subitoTitle,
+    vintedTitle,
+    description
+  };
 }
+

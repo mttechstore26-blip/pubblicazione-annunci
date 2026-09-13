@@ -11,9 +11,8 @@
 // quinte): foto → titolo → analisi AI → generazione annuncio →
 // modifica manuale → pubblicazione con risultato per piattaforma.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PhotoUploader } from "../../components/PhotoUploader";
-import { RecognitionResult } from "../../components/RecognitionResult";
 import { uploadPhotos } from "../../lib/upload-photos";
 
 type Status = "idle" | "analyzing" | "analyzed" | "generating" | "ready" | "uploading" | "publishing" | "published" | "error";
@@ -21,6 +20,30 @@ type Status = "idle" | "analyzing" | "analyzed" | "generating" | "ready" | "uplo
 export default function NuovoAnnuncioPage() {
   const [photos, setPhotos] = useState<File[]>([]);
   const [title, setTitle] = useState("");
+  const [productTemplates, setProductTemplates] = useState<any[]>([]);
+
+  useEffect(() => {
+    async function loadProductTemplates() {
+      try {
+        const response = await fetch("/api/product-template");
+
+        if (!response.ok) {
+          throw new Error("Errore caricamento prodotti");
+        }
+
+        const data = await response.json();
+
+        setProductTemplates(data.templates ?? []);
+      } catch (error) {
+        console.error(
+          "MT TECH: errore caricamento tendina prodotti",
+          error
+        );
+      }
+    }
+
+    loadProductTemplates();
+  }, []);
   const [status, setStatus] = useState<Status>("idle");
   const [recognition, setRecognition] = useState<any>(null);
 
@@ -34,30 +57,98 @@ export default function NuovoAnnuncioPage() {
   const [publishResults, setPublishResults] = useState<any[] | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  const [publishedImageUrls, setPublishedImageUrls] = useState<string[]>([]);
+
+  const productSavedRef = useRef(false);
+
   useEffect(() => {
+    function updateFinalStatus(results: any[]) {
+      if (results.length === 0) return;
+
+      // Se almeno una piattaforma sta ancora lavorando, aspettiamo.
+      if (results.some((result) => result.pending === true)) {
+        setStatus("publishing");
+        return;
+      }
+
+      // Entrambe hanno terminato.
+      if (results.every((result) => result.success === true)) {
+        setUploadError(null);
+        setStatus("published");
+        return;
+      }
+
+      // Una o entrambe hanno fallito.
+      const failed = results.find(
+        (result) => result.success !== true
+      );
+
+      setUploadError(
+        failed?.error ||
+          `Pubblicazione ${failed?.platform || "piattaforma"} non riuscita`
+      );
+
+      setStatus("error");
+    }
+
     function handleExtensionMessage(event: MessageEvent) {
       if (event.source !== window) return;
 
-      if (event.data?.type !== "MTTECH_SUBITO_RESULT") return;
+      if (event.data?.type === "MTTECH_SUBITO_RESULT") {
+        setPublishResults((current) => {
+          const results = current ?? [];
 
-      if (event.data?.success !== true) return;
+          const next = results.map((result) =>
+            result.platform === "SUBITO"
+              ? {
+                  ...result,
+                  success: event.data?.success === true,
+                  pending: false,
+                  externalId:
+                    event.data?.success === true
+                      ? event.data.adId ?? null
+                      : undefined,
+                  error:
+                    event.data?.success === true
+                      ? undefined
+                      : event.data?.error ||
+                        "Errore pubblicazione Subito",
+                }
+              : result
+          );
 
-      setPublishResults((current) => {
-        const results = current ?? [];
+          updateFinalStatus(next);
+          return next;
+        });
 
-        return results.map((result) =>
-          result.platform === "SUBITO"
-            ? {
-                ...result,
-                success: true,
-                pending: false,
-                externalId: event.data.adId ?? null,
-              }
-            : result
-        );
-      });
+        return;
+      }
 
-      setStatus("published");
+      if (event.data?.type === "MTTECH_VINTED_RESULT") {
+        setPublishResults((current) => {
+          const results = current ?? [];
+
+          const next = results.map((result) =>
+            result.platform === "VINTED"
+              ? {
+                  ...result,
+                  success: event.data?.success === true,
+                  pending: false,
+                  error:
+                    event.data?.success === true
+                      ? undefined
+                      : event.data?.error ||
+                        "Errore pubblicazione Vinted",
+                }
+              : result
+          );
+
+          updateFinalStatus(next);
+          return next;
+        });
+
+        return;
+      }
     }
 
     window.addEventListener("message", handleExtensionMessage);
@@ -67,38 +158,389 @@ export default function NuovoAnnuncioPage() {
     };
   }, []);
 
-  async function handleAnalyze() {
-    setStatus("analyzing");
-    const fakeImageUrls = photos.map((f) => f.name);
+  useEffect(() => {
+    function handleExtensionMessage(event: MessageEvent) {
+      if (event.source !== window) return;
 
-    const response = await fetch("/api/analyze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ imageUrls: fakeImageUrls, userTitle: title }),
-    });
+      if (event.data?.type === "MTTECH_SUBITO_RESULT") {
+        if (event.data?.success !== true) return;
 
-    const data = await response.json();
-    setRecognition(data);
-        setCondition(data.cosmeticCondition?.value || "Buone condizioni");
-    setStatus("analyzed");
+        setPublishResults((current) => {
+          const results = current ?? [];
+
+          const next = results.map((result) =>
+            result.platform === "SUBITO"
+              ? {
+                  ...result,
+                  success: true,
+                  pending: false,
+                  externalId: event.data.adId ?? null,
+                }
+              : result
+          );
+
+          if (
+            next.length > 0 &&
+            next.every((result) => result.pending !== true) &&
+            next.every((result) => result.success === true)
+          ) {
+            setUploadError(null);
+            setStatus("published");
+          }
+
+          return next;
+        });
+
+        return;
+      }
+
+      if (event.data?.type === "MTTECH_VINTED_RESULT") {
+        setPublishResults((current) => {
+          const results = current ?? [];
+
+          return results.map((result) =>
+            result.platform === "VINTED"
+              ? {
+                  ...result,
+                  success: event.data?.success === true,
+                  pending: false,
+                  error:
+                    event.data?.success === true
+                      ? undefined
+                      : event.data?.error || "Errore pubblicazione Vinted",
+                }
+              : result
+          );
+        });
+
+        if (event.data?.success === true) {
+          setUploadError(null);
+          setStatus("published");
+        } else {
+          setUploadError(
+            event.data?.error || "Errore pubblicazione Vinted"
+          );
+          setStatus("error");
+        }
+
+        return;
+      }
+    }
+
+    window.addEventListener("message", handleExtensionMessage);
+
+    return () => {
+      window.removeEventListener("message", handleExtensionMessage);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!publishResults || publishResults.length === 0) return;
+
+    // Aspettiamo che tutte le piattaforme abbiano concluso il tentativo.
+    if (publishResults.some((result) => result.pending === true)) return;
+
+    // Evita di salvare due volte lo stesso prodotto.
+    if (productSavedRef.current) return;
+
+    productSavedRef.current = true;
+
+    async function saveProduct() {
+      try {
+        const response = await fetch("/api/save-product", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title: title,
+            description,
+            category: recognition?.category?.value ?? null,
+            brand: recognition?.brand?.value ?? null,
+            model: recognition?.model?.value ?? null,
+            condition: condition || null,
+            price,
+            imageUrls: publishedImageUrls,
+            publishResults: publishResults.map((result) => ({
+              platform: result.platform,
+              success: result.success === true,
+              platformListingId:
+                result.externalId ?? result.platformListingId ?? undefined,
+              platformUrl:
+                result.platform === "SUBITO" && result.externalId
+                  ? `https://areariservata.subito.it/annunci/inserito?adId=${result.externalId}`
+                  : result.platformUrl ?? undefined,
+              error: result.error ?? undefined,
+            })),
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(
+            `Salvataggio database fallito (${response.status}): ${errorText}`
+          );
+        }
+
+        const data = await response.json();
+
+        console.log(
+          "✅ MT TECH: prodotto salvato nel database",
+          data.product?.id
+        );
+      } catch (error) {
+        // Consente un eventuale nuovo tentativo se il salvataggio fallisce.
+        productSavedRef.current = false;
+
+        console.error(
+          "MT TECH: errore salvataggio prodotto",
+          error
+        );
+      }
+    }
+
+    saveProduct();
+  }, [
+    publishResults,
+    publishedImageUrls,
+    title,
+    description,
+    recognition,
+    condition,
+    price,
+  ]);
+
+  async function prepareListingAutomatically(productName: string) {
+    const cleanName = productName.trim();
+
+    if (cleanName.length < 3 || photos.length === 0) {
+      return;
+    }
+
+    try {
+      setUploadError(null);
+      setStatus("analyzing");
+
+      // 1. Prima cerchiamo se questo prodotto è già conosciuto.
+      const templateResponse = await fetch(
+        `/api/product-template?q=${encodeURIComponent(cleanName)}`
+      );
+
+      if (templateResponse.ok) {
+        const templateData = await templateResponse.json();
+        const template = templateData.template;
+
+        if (template) {
+          const defaults =
+            template.defaultAttributes &&
+            typeof template.defaultAttributes === "object"
+              ? template.defaultAttributes
+              : {};
+
+          const subito =
+            template.subitoAttributes &&
+            typeof template.subitoAttributes === "object"
+              ? template.subitoAttributes
+              : {};
+
+          const vinted =
+            template.vintedAttributes &&
+            typeof template.vintedAttributes === "object"
+              ? template.vintedAttributes
+              : {};
+
+          const templateRecognition = {
+            brand: {
+              value: template.brand,
+              confidence: 1,
+            },
+            model: {
+              value: template.model,
+              confidence: 1,
+            },
+            category: {
+              value: template.category,
+              confidence: 1,
+            },
+            cosmeticCondition: {
+              value:
+                defaults.condition ||
+                "Ottime condizioni",
+              confidence: 1,
+            },
+          };
+
+          setRecognition(templateRecognition);
+
+          setSubitoTitle(
+            subito.title ||
+            defaults.subitoTitle ||
+            cleanName
+          );
+
+          setVintedTitle(
+            vinted.title ||
+            defaults.vintedTitle ||
+            cleanName
+          );
+
+          setDescription(
+            template.descriptionPattern ||
+            defaults.description ||
+            ""
+          );
+
+          const savedPrice = Number(defaults.price || 0);
+
+          const fallbackPrice =
+            template.priceRangeMin && template.priceRangeMax
+              ? Math.round(
+                  (Number(template.priceRangeMin) +
+                    Number(template.priceRangeMax)) /
+                    2
+                )
+              : 0;
+
+          setPrice(savedPrice || fallbackPrice);
+
+          setCondition(
+            defaults.condition ||
+            "Ottime condizioni"
+          );
+
+          setStatus("ready");
+
+          console.log(
+            "✅ MT TECH: template già conosciuto utilizzato:",
+            `${template.brand} ${template.model}`
+          );
+
+          return;
+        }
+      }
+
+      // 2. Se non esiste un template, usiamo la generazione attuale.
+      const analyzeResponse = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageUrls: photos.map((f) => f.name),
+          userTitle: cleanName,
+        }),
+      });
+
+      if (!analyzeResponse.ok) {
+        throw new Error("Analisi prodotto non riuscita");
+      }
+
+      const analyzed = await analyzeResponse.json();
+
+      setRecognition(analyzed);
+
+      const generatedCondition =
+        analyzed.cosmeticCondition?.value ||
+        "Ottime condizioni";
+
+      setCondition(generatedCondition);
+      setStatus("generating");
+
+      const generateResponse = await fetch("/api/generate-listing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recognition: analyzed,
+          userTitle: cleanName,
+        }),
+      });
+
+      if (!generateResponse.ok) {
+        throw new Error("Generazione annuncio non riuscita");
+      }
+
+      const generated = await generateResponse.json();
+
+      const finalSubitoTitle =
+        generated.subitoTitle || cleanName;
+
+      const finalVintedTitle =
+        generated.vintedTitle || cleanName;
+
+      const finalDescription =
+        generated.description || "";
+
+      const finalPrice =
+        generated.price?.recommended ?? 0;
+
+      setSubitoTitle(finalSubitoTitle);
+      setVintedTitle(finalVintedTitle);
+      setDescription(finalDescription);
+      setPrice(finalPrice);
+
+      setStatus("ready");
+
+      // 3. Memorizziamo il nuovo prodotto per le prossime volte.
+      fetch("/api/product-template", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          brand: analyzed?.brand?.value,
+          model: analyzed?.model?.value,
+          category: analyzed?.category?.value,
+
+          defaultAttributes: {
+            subitoTitle: finalSubitoTitle,
+            vintedTitle: finalVintedTitle,
+            description: finalDescription,
+            condition: generatedCondition,
+            price: finalPrice,
+          },
+
+          subitoAttributes: {
+            title: finalSubitoTitle,
+          },
+
+          vintedAttributes: {
+            title: finalVintedTitle,
+          },
+
+          descriptionPattern: finalDescription,
+
+          priceRangeMin:
+            generated.price?.min ?? finalPrice,
+
+          priceRangeMax:
+            generated.price?.max ?? finalPrice,
+        }),
+      }).catch((error) => {
+        console.error(
+          "MT TECH: template non salvato",
+          error
+        );
+      });
+    } catch (error) {
+      setUploadError(
+        error instanceof Error
+          ? error.message
+          : "Errore durante la preparazione dell'annuncio"
+      );
+
+      setStatus("error");
+    }
   }
 
-  async function handleGenerate() {
-    setStatus("generating");
+  useEffect(() => {
+    if (title.trim().length < 3 || photos.length === 0) {
+      return;
+    }
 
-    const response = await fetch("/api/generate-listing", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ recognition, userTitle: title }),
-    });
+    const timer = window.setTimeout(() => {
+      prepareListingAutomatically(title);
+    }, 900);
 
-    const data = await response.json();
-    setSubitoTitle(data.subitoTitle);
-    setVintedTitle(data.vintedTitle);
-    setDescription(data.description);
-    setPrice(data.price?.recommended ?? 0);
-    setStatus("ready");
-  }
+    return () => window.clearTimeout(timer);
+  }, [title, photos]);
 
   async function handlePublish() {
     setUploadError(null);
@@ -120,6 +562,30 @@ export default function NuovoAnnuncioPage() {
       }
     }
 
+    if (realImageUrls.length === 0) {
+      setUploadError("Carica almeno una foto del prodotto");
+      setStatus("error");
+      return;
+    }
+
+    productSavedRef.current = false;
+    setPublishedImageUrls(realImageUrls);
+
+    // Prepariamo PRIMA i due stati.
+    // Così nessun risultato veloce dell'estensione può andare perso.
+    setPublishResults([
+      {
+        platform: "SUBITO",
+        success: false,
+        pending: true,
+      },
+      {
+        platform: "VINTED",
+        success: false,
+        pending: true,
+      },
+    ]);
+
     setStatus("publishing");
 
     const listing = {
@@ -128,13 +594,12 @@ export default function NuovoAnnuncioPage() {
       description,
       category: recognition.category.value,
       brand: recognition.brand.value,
-      model: recognition.model.value,
       condition,
       price,
       images: realImageUrls,
     };
 
-    // Invia l'annuncio al bridge dell'estensione Chrome MT TECH.
+    // Pubblica su Subito.
     window.postMessage(
       {
         type: "MTTECH_PUBLISH_SUBITO",
@@ -147,124 +612,112 @@ export default function NuovoAnnuncioPage() {
       "*"
     );
 
-    // Subito viene confermato realmente dall'estensione Chrome.
-    // Vinted non è ancora collegato alla pubblicazione reale.
-    setPublishResults([
+    // Pubblica su Vinted.
+    window.postMessage(
       {
-        platform: "SUBITO",
-        success: false,
-        pending: true,
+        type: "MTTECH_PUBLISH_VINTED",
+        listing: {
+          ...listing,
+          title: vintedTitle || title,
+        },
       },
-      {
-        platform: "VINTED",
-        success: false,
-        pending: false,
-        error: "Automazione Vinted non ancora collegata",
-      },
-    ]);
+      "*"
+    );
 
-    // Manteniamo lo stato "publishing" finché Subito non conferma
-    // realmente il completamento dell'inserimento.
+
   }
 
   return (
     <main className="min-h-screen bg-white px-4 pt-6 pb-24 max-w-md mx-auto">
-      <h1 className="text-xl font-semibold mb-4">Nuovo annuncio</h1>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-xl font-semibold">Nuovo annuncio</h1>
+
+        <a
+          href="/prodotti"
+          className="text-sm font-semibold border border-gray-300 rounded-xl px-3 py-2"
+        >
+          Gestione prodotti
+        </a>
+      </div>
+
 
       <section className="mb-6">
-        <p className="text-sm font-medium text-gray-600 mb-2">1. Aggiungi le foto</p>
+        <p className="text-sm font-semibold text-gray-800 mb-2">
+          1. Seleziona prodotto
+        </p>
+
+        <select
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          className="w-full h-14 text-base border border-gray-300 rounded-2xl px-4 bg-white focus:outline-none focus:ring-2 focus:ring-black"
+        >
+          <option value="">Seleziona prodotto</option>
+
+          {productTemplates.map((template) => {
+            const productName = `${template.brand} ${template.model}`;
+
+            return (
+              <option key={template.id} value={productName}>
+                {productName}
+              </option>
+            );
+          })}
+        </select>
+      </section>
+
+      <section className="mb-6">
+        <p className="text-sm font-semibold text-gray-800 mb-2">
+          2. Carica le foto
+        </p>
+
         <PhotoUploader onChange={setPhotos} />
       </section>
 
-      <section className="mb-6">
-        <p className="text-sm font-medium text-gray-600 mb-2">2. Scrivi un titolo breve</p>
-        <input
-          type="text"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Es. Nintendo Switch completa"
-          className="w-full text-base border border-gray-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-black"
-        />
-      </section>
-
       {status === "analyzing" && (
-        <p className="text-sm text-gray-500 mb-4">Sto analizzando il prodotto…</p>
-      )}
-
-      {(status === "analyzed" || status === "generating" || status === "ready" || status === "publishing" || status === "published") && recognition && (
-        <section className="mb-6">
-          <RecognitionResult result={recognition} />
-        </section>
-      )}
-
-      {status === "analyzed" && (
-        <button
-          type="button"
-          onClick={handleGenerate}
-          className="w-full h-12 rounded-2xl text-white text-base font-semibold bg-gray-800 mb-24"
-        >
-          Genera annuncio
-        </button>
+        <p className="text-sm text-gray-500 mb-4">Riconosco il prodotto e preparo l’annuncio…</p>
       )}
 
       {status === "generating" && (
-        <p className="text-sm text-gray-500 mb-4">Sto preparando titolo, descrizione e prezzo…</p>
+        <p className="text-sm text-gray-500 mb-4">Compilazione automatica dell’annuncio…</p>
       )}
 
       {(status === "ready" || status === "uploading" || status === "publishing" || status === "published" || status === "error") && (
         <section className="mb-24">
-          <p className="text-base font-semibold mb-2">Anteprima annuncio</p>
+          <div className="border border-gray-200 rounded-2xl p-5 bg-gray-50">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold">Riepilogo annuncio</h2>
+              <span className="text-green-600 text-sm font-semibold">
+                ✓ Pronto
+              </span>
+            </div>
 
-          <label className="block text-xs text-gray-500 mt-3 mb-1">Titolo Subito</label>
-          <input
-            value={subitoTitle}
-            onChange={(e) => setSubitoTitle(e.target.value)}
-            className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-          />
+            <div className="mb-4">
+              <p className="text-xs text-gray-500 mb-1">Prodotto</p>
+              <p className="text-base font-semibold">
+                {subitoTitle || title}
+              </p>
+            </div>
 
-          <label className="block text-xs text-gray-500 mt-3 mb-1">Titolo Vinted</label>
-          <input
-            value={vintedTitle}
-            onChange={(e) => setVintedTitle(e.target.value)}
-            className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-          />
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="bg-white border border-gray-200 rounded-xl p-3">
+                <p className="text-xs text-gray-500 mb-1">Prezzo</p>
+                <p className="text-lg font-bold">{price} €</p>
+              </div>
 
-          <label className="block text-xs text-gray-500 mt-3 mb-1">Descrizione</label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={5}
-            className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-          />
+              <div className="bg-white border border-gray-200 rounded-xl p-3">
+                <p className="text-xs text-gray-500 mb-1">Condizioni</p>
+                <p className="text-sm font-semibold">{condition}</p>
+              </div>
+            </div>
 
-          <label className="block text-xs text-gray-500 mt-3 mb-1">Prezzo (€)</label>
-          <input
-            type="number"
-            value={price}
-            onChange={(e) => setPrice(Number(e.target.value))}
-            className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
-          />
-
-
-          <div className="relative z-50 pointer-events-auto">
-          <label className="block text-xs text-gray-500 mt-3 mb-1">
-            Condizione *
-          </label>
-
-          <select
-            value={condition}
-            onChange={(e) => setCondition(e.target.value)}
-            className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white"
-          >
-            <option value="">Seleziona condizione</option>
-            <option value="Nuovo">Nuovo</option>
-            <option value="Come nuovo">Come nuovo</option>
-            <option value="Ottime condizioni">Ottime condizioni</option>
-            <option value="Buone condizioni">Buone condizioni</option>
-            <option value="Discrete condizioni">Discrete condizioni</option>
-          </select>
-
-
+            <div>
+              <p className="text-xs text-gray-500 mb-1">Descrizione</p>
+              <div className="bg-white border border-gray-200 rounded-xl p-3">
+                <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                  {description}
+                </p>
+              </div>
+            </div>
           </div>
 
           {status === "ready" && (
@@ -299,7 +752,7 @@ export default function NuovoAnnuncioPage() {
             </div>
           )}
 
-          {status === "published" && publishResults && (
+          {(status === "publishing" || status === "published" || status === "error") && publishResults && (
             <div className="mt-6 space-y-2">
               {publishResults.map((r) => (
                 <div key={r.platform} className="flex items-center justify-between border border-gray-200 rounded-xl px-4 py-3">
@@ -318,16 +771,7 @@ export default function NuovoAnnuncioPage() {
         </section>
       )}
 
-      {status === "idle" || status === "analyzing" ? (
-        <button
-          type="button"
-          onClick={handleAnalyze}
-          disabled={title.trim().length === 0 || status === "analyzing"}
-          className="fixed bottom-6 left-4 right-4 max-w-md mx-auto h-14 rounded-2xl text-white text-base font-semibold bg-black disabled:bg-gray-300 disabled:text-gray-500"
-        >
-          {status === "analyzing" ? "Analisi in corso…" : "Analizza con AI"}
-        </button>
-      ) : null}
+
     </main>
   );
 }
