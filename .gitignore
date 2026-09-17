@@ -1,9 +1,38 @@
 .env
-.env.local
-.env.*
+*.session
+*.session-journal
+__pycache__/
+*.pyc
+data/
+*.db
+*.sqlite
+*.sqlite3
+venv/
+.venv/
+.DS_Store
+
+# Node / Next.js
 node_modules/
 .next/
+out/
+
+# Environment / secrets
+.env.local
+.env.*.local
+
+# Browser profiles e sessioni
 subito-profile/
+vinted-profile/
+**/subito-profile/
+**/vinted-profile/
+
+# Backup temporanei
+*.backup
+*.backup-*
+*.bak
+
+# Log
 *.log
-.DS_Store
-apps/web/pw-profile/
+
+# Prisma binaries generati per sistema operativo
+packages/db/generated/client/*.so.node

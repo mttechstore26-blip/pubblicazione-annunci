@@ -2,20 +2,38 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Annunci Subito + Vinted",
+  title: "MT TECH Publisher",
   description: "Crea e pubblica annunci su Subito e Vinted in pochi tocchi",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "MT TECH",
+  },
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [
+      { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+    ],
+  },
 };
 
-// Queste impostazioni servono per far sembrare l'app una vera app quando
-// la aggiungi alla schermata Home dell'iPhone (niente barra di Safari,
-// niente zoom accidentale).
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
+  viewportFit: "cover",
+  themeColor: "#111111",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="it">
       <body className="bg-white text-black antialiased">{children}</body>

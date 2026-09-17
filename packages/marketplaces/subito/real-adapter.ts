@@ -46,7 +46,11 @@ export class SubitoRealAdapter implements MarketplaceAdapter {
   private page: Page | null = null;
 
   private async getPage(): Promise<Page> {
-    if (this.page) return this.page;
+    console.log("[SUBITO] getPage avviato");
+    if (this.page) {
+      console.log("[SUBITO] pagina esistente riutilizzata");
+      return this.page;
+    }
 
     const userDataDir =
       process.env.SUBITO_PROFILE_DIR ||
@@ -55,9 +59,11 @@ export class SubitoRealAdapter implements MarketplaceAdapter {
     const nodeRequire = eval("require") as NodeRequire;
     const { chromium } = nodeRequire("playwright") as typeof import("playwright");
 
+    console.log("[SUBITO] avvio Chromium con profilo:", userDataDir);
     this.context = await chromium.launchPersistentContext(userDataDir, {
-      channel: "chrome",
+      executablePath: "/root/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome",
       headless: false,
+      args: ["--no-sandbox", "--disable-dev-shm-usage"],
     });
 
     this.page = this.context.pages()[0] || (await this.context.newPage());
@@ -74,9 +80,10 @@ export class SubitoRealAdapter implements MarketplaceAdapter {
         timeout: 60000,
       });
 
+      console.log("[SUBITO] pagina caricata:", page.url());
       const loginVisible =
         page.url().includes("login") ||
-        (await page.getByText("Accedi", { exact: true }).count()) > 0;
+        page.url().includes("accedi");
 
       return {
         connected: !loginVisible,
@@ -149,19 +156,23 @@ export class SubitoRealAdapter implements MarketplaceAdapter {
     payload: PlatformPayload,
     _idempotencyKey: string
   ): Promise<PublishResult> {
+    console.log("[SUBITO] publishListing iniziato");
     const page = await this.getPage();
     const tempFiles: string[] = [];
 
     try {
+      console.log("[SUBITO] apertura:", NEW_LISTING_URL);
       await page.goto(NEW_LISTING_URL, {
         waitUntil: "domcontentloaded",
         timeout: 60000,
       });
 
+      console.log("[SUBITO] pagina caricata:", page.url());
       const loginVisible =
         page.url().includes("login") ||
-        (await page.getByText("Accedi", { exact: true }).count()) > 0;
+        page.url().includes("accedi");
 
+      console.log("[SUBITO] loginVisible:", loginVisible);
       if (loginVisible) {
         return {
           success: false,
@@ -175,27 +186,82 @@ export class SubitoRealAdapter implements MarketplaceAdapter {
       const price = Number(payload.fields.prezzo ?? 0);
       const location = String(payload.fields.localita ?? "Palmi");
 
+      console.log("[SUBITO] attendo campo #ad_name");
       await page.locator("#ad_name").waitFor({
         state: "visible",
         timeout: 30000,
       });
 
-      await page.locator("#ad_name").fill(title);
-      await page.waitForTimeout(1200);
+      const adNameField = page.locator("#ad_name");
 
-      const suggestion = page
+      await adNameField.fill("");
+      await adNameField.fill(title);
+
+      console.log("[SUBITO] titolo inserito per categoria:", title);
+
+      await page.waitForTimeout(2500);
+
+      let suggestion = page
         .locator("#suggestions-autocomplete li")
         .first();
 
       if (!(await suggestion.count())) {
+        console.log("[SUBITO] primo tentativo categoria fallito, riprovo");
+
+        await adNameField.click();
+        await adNameField.press("End");
+        await adNameField.type(" ");
+
+        await page.waitForTimeout(500);
+
+        await adNameField.press("Backspace");
+
+        await page.waitForTimeout(3000);
+
+        suggestion = page
+          .locator("#suggestions-autocomplete li")
+          .first();
+      }
+
+      if (!(await suggestion.count())) {
+        const genericSuggestions = page.locator(
+          '[role="option"], [role="listbox"] li'
+        );
+
+        const genericCount = await genericSuggestions.count();
+
+        console.log(
+          "[SUBITO] suggerimenti categoria generici:",
+          genericCount
+        );
+
+        if (genericCount > 0) {
+          suggestion = genericSuggestions.first();
+        }
+      }
+
+      if (!(await suggestion.count())) {
+        console.log("[SUBITO] nessuna categoria proposta");
+
         return {
           success: false,
           requiresManualStep: true,
-          error: "Subito non ha proposto automaticamente una categoria.",
+          error:
+            "Subito non ha proposto automaticamente una categoria. Riprova tra qualche secondo.",
         };
       }
 
+      const suggestionText =
+        (await suggestion.innerText().catch(() => "")).trim();
+
+      console.log(
+        "[SUBITO] categoria proposta:",
+        suggestionText
+      );
+
       await suggestion.click();
+
+      console.log("[SUBITO] categoria selezionata");
 
       await page.waitForURL(/inserimento\.subito\.it/, {
         timeout: 30000,
@@ -237,20 +303,111 @@ export class SubitoRealAdapter implements MarketplaceAdapter {
         }
       }
 
-      await page.locator("#location").fill(location);
-      await page.waitForTimeout(1000);
+      const locationField = page.locator("#location");
 
-      const locationSuggestion = page
-        .locator('[id^="autocomplete-location-item-"]')
-        .first();
+      await locationField.fill("");
+      await locationField.fill(location);
 
-      if (await locationSuggestion.count()) {
-        await locationSuggestion.click();
+      console.log("[SUBITO] località digitata:", location);
+
+      await page.waitForTimeout(2000);
+
+      let locationSuggestions = page.locator(
+        '[id^="autocomplete-location-item-"]'
+      );
+
+      let suggestionCount = await locationSuggestions.count();
+
+      if (suggestionCount === 0) {
+        locationSuggestions = page.locator(
+          '[role="option"], [role="listbox"] li'
+        );
+
+        suggestionCount = await locationSuggestions.count();
+
+        console.log(
+          "[SUBITO] suggerimenti località generici:",
+          suggestionCount
+        );
       }
+
+      if (suggestionCount > 0) {
+        const suggestionTexts =
+          await locationSuggestions.allInnerTexts();
+
+        console.log(
+          "[SUBITO] suggerimenti località:",
+          JSON.stringify(suggestionTexts)
+        );
+
+        let chosen = false;
+
+        for (let i = 0; i < suggestionCount; i++) {
+          const item = locationSuggestions.nth(i);
+          const text = (await item.innerText()).trim();
+
+          if (text.toLowerCase().includes(location.toLowerCase())) {
+            await item.click();
+            chosen = true;
+
+            console.log(
+              "[SUBITO] località selezionata:",
+              text
+            );
+
+            break;
+          }
+        }
+
+        if (!chosen) {
+          const firstSuggestion = locationSuggestions.first();
+          const text = (await firstSuggestion.innerText()).trim();
+
+          await firstSuggestion.click();
+
+          console.log(
+            "[SUBITO] primo suggerimento località selezionato:",
+            text
+          );
+        }
+      } else {
+        console.log(
+          "[SUBITO] nessun suggerimento DOM, provo tastiera"
+        );
+
+        await locationField.press("ArrowDown");
+        await page.waitForTimeout(500);
+        await locationField.press("Enter");
+        await page.waitForTimeout(1200);
+
+        console.log(
+          "[SUBITO] tentativo selezione località via tastiera completato"
+        );
+      }
+
+      await page.waitForTimeout(1000);
 
       await page
         .locator("#price")
         .fill(String(Math.round(price)));
+
+      const subitoPhone = process.env.SUBITO_PHONE?.trim();
+
+      const phoneField = page.locator("#phone");
+
+      if (await phoneField.count()) {
+        if (!subitoPhone) {
+          return {
+            success: false,
+            requiresManualStep: true,
+            error: "Numero di telefono Subito non configurato.",
+          };
+        }
+
+        await phoneField.fill(subitoPhone);
+
+        console.log("[SUBITO] telefono compilato");
+      }
 
       const publishButton = page.getByRole("button", {
         name: /Pubblica annuncio/i,
@@ -264,24 +421,69 @@ export class SubitoRealAdapter implements MarketplaceAdapter {
         };
       }
 
+      // Gestione popup cookie Didomi che può bloccare il click finale
+      const didomiPopup = page.locator("#didomi-host");
+
+      if (await didomiPopup.count()) {
+        const cookieButtons = [
+          page.getByRole("button", { name: /Accetta tutto/i }),
+          page.getByRole("button", { name: /Accetta e continua/i }),
+          page.getByRole("button", { name: /Accetta/i }),
+          page.getByRole("button", { name: /Continua senza accettare/i }),
+          page.getByRole("button", { name: /Rifiuta tutto/i }),
+        ];
+
+        for (const button of cookieButtons) {
+          if (await button.count()) {
+            try {
+              await button.first().click({ timeout: 3000 });
+              await page.waitForTimeout(800);
+              break;
+            } catch {}
+          }
+        }
+
+        if (await page.locator("#didomi-popup").count()) {
+          await page.evaluate(() => {
+            document.querySelector("#didomi-host")?.remove();
+            document.body.style.overflow = "auto";
+          });
+          await page.waitForTimeout(500);
+        }
+      }
+
       await publishButton.click();
 
-      await page.waitForTimeout(2500);
+      console.log("[SUBITO] click Pubblica annuncio eseguito");
+
+      await page.waitForTimeout(7000);
 
       const currentUrl = page.url();
-      const match = currentUrl.match(/id:ad:([a-zA-Z0-9-]+)/);
+      const html = await page.content();
+      const bodyText = await page.locator("body").innerText().catch(() => "");
 
-      if (match) {
+      console.log("[SUBITO] URL dopo pubblicazione:", currentUrl);
+
+      const idFromUrn = currentUrl.match(/id:ad:([a-zA-Z0-9-]+)/);
+      const idFromQuery = currentUrl.match(/[?&]adId=([a-zA-Z0-9-]+)/i);
+
+      const platformListingId =
+        idFromUrn?.[1] ||
+        idFromQuery?.[1];
+
+      if (platformListingId) {
+        console.log("[SUBITO] ID annuncio confermato:", platformListingId);
+
         return {
           success: true,
-          platformListingId: match[1],
+          platformListingId,
           platformUrl: currentUrl,
         };
       }
 
-      const html = await page.content();
-
       if (/captcha|challenge|verifica|verify/i.test(html)) {
+        console.log("[SUBITO] verifica manuale richiesta");
+
         return {
           success: false,
           requiresManualStep: true,
@@ -289,10 +491,29 @@ export class SubitoRealAdapter implements MarketplaceAdapter {
         };
       }
 
+      const confirmedByText =
+        /annuncio pubblicato|annuncio inserito|pubblicazione completata|il tuo annuncio è stato pubblicato/i.test(
+          bodyText
+        );
+
+      if (confirmedByText) {
+        console.log("[SUBITO] conferma testuale pubblicazione trovata");
+
+        return {
+          success: true,
+          platformUrl: currentUrl,
+        };
+      }
+
+      console.log("[SUBITO] nessuna conferma certa di pubblicazione");
+
       return {
-        success: true,
-        platformUrl: currentUrl,
+        success: false,
+        requiresManualStep: true,
+        error:
+          "Subito non ha restituito una conferma certa della pubblicazione. Controlla I tuoi annunci.",
       };
+
     } catch (error) {
       return {
         success: false,

@@ -9,67 +9,62 @@ export async function POST(request: NextRequest) {
   const {
     listing,
     subitoTitle,
-    vintedTitle,
   } = body as {
     listing: NormalizedListing;
     subitoTitle?: string;
-    vintedTitle?: string;
   };
 
   const idempotencyKey = randomUUID();
 
-  const platformListings: Record<"SUBITO" | "VINTED", NormalizedListing> = {
-    SUBITO: {
-      ...listing,
-      title: subitoTitle?.trim() || listing.title,
-    },
-    VINTED: {
-      ...listing,
-      title: vintedTitle?.trim() || listing.title,
-    },
+  const platform = "SUBITO" as const;
+
+  const adapter = getAdapter(platform);
+
+  const platformListing: NormalizedListing = {
+    ...listing,
+    title: subitoTitle?.trim() || listing.title,
   };
 
-  const platforms = ["SUBITO", "VINTED"] as const;
+  const validation = adapter.validateListing(platformListing);
 
-  const results = await Promise.all(
-    platforms.map(async (platform) => {
-      const adapter = getAdapter(platform);
-      const platformListing = platformListings[platform];
-
-      const validation = adapter.validateListing(platformListing);
-
-      if (!validation.valid) {
-        return {
+  if (!validation.valid) {
+    return NextResponse.json({
+      results: [
+        {
           platform,
           success: false,
           error: `Campi mancanti: ${validation.missingFields.join(", ")}`,
-        };
-      }
+        },
+      ],
+    });
+  }
 
-      const payload = adapter.transformListing(platformListing);
+  const payload = adapter.transformListing(platformListing);
 
-      try {
-        const publishResult = await adapter.publishListing(
-          payload,
-          `${idempotencyKey}-${platform}`
-        );
+  let result;
 
-        return {
-          platform,
-          ...publishResult,
-        };
-      } catch (err) {
-        return {
-          platform,
-          success: false,
-          error:
-            err instanceof Error
-              ? err.message
-              : "Errore sconosciuto",
-        };
-      }
-    })
-  );
+  try {
+    const publishResult = await adapter.publishListing(
+      payload,
+      `${idempotencyKey}-${platform}`
+    );
+
+    result = {
+      platform,
+      ...publishResult,
+    };
+  } catch (err) {
+    result = {
+      platform,
+      success: false,
+      error:
+        err instanceof Error
+          ? err.message
+          : "Errore sconosciuto",
+    };
+  }
+
+  const results = [result];
 
   return NextResponse.json({ results });
 }

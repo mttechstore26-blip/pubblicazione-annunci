@@ -17,6 +17,7 @@ import type { MarketplaceAdapter, Platform } from "../types";
 import { SubitoMockAdapter } from "./subito/mock-adapter";
 import { VintedMockAdapter } from "./vinted/mock-adapter";
 import { SubitoRealAdapter } from "./subito/real-adapter";
+import { VintedRealAdapter } from "./vinted/real-adapter";
 
 export function getAdapter(platform: Platform): MarketplaceAdapter {
   if (platform === "SUBITO") {
@@ -25,7 +26,8 @@ export function getAdapter(platform: Platform): MarketplaceAdapter {
   }
 
   if (platform === "VINTED") {
-    return new VintedMockAdapter();
+    const useMock = process.env.MOCK_VINTED !== "false";
+    return useMock ? new VintedMockAdapter() : new VintedRealAdapter();
   }
 
   throw new Error(`Piattaforma sconosciuta: ${platform}`);

@@ -5,7 +5,7 @@
 // Novità di questo passaggio: dopo che l'AI ha riconosciuto il prodotto,
 // appare un pulsante "Genera annuncio" che prepara titolo, descrizione e
 // prezzo per Subito e Vinted, MODIFICABILI da te. Alla fine c'è il
-// pulsante vero "Pubblica su Subito + Vinted".
+// pulsante vero "Pubblica su Subito".
 //
 // Il flusso ora è completo (anche se ancora tutto "finto" dietro le
 // quinte): foto → titolo → analisi AI → generazione annuncio →
@@ -579,11 +579,6 @@ export default function NuovoAnnuncioPage() {
         success: false,
         pending: true,
       },
-      {
-        platform: "VINTED",
-        success: false,
-        pending: true,
-      },
     ]);
 
     setStatus("publishing");
@@ -599,32 +594,55 @@ export default function NuovoAnnuncioPage() {
       images: realImageUrls,
     };
 
-    // Pubblica su Subito.
-    window.postMessage(
-      {
-        type: "MTTECH_PUBLISH_SUBITO",
-        listing: {
-          ...listing,
-          title: subitoTitle || title,
-          location: "Palmi",
+    try {
+      const response = await fetch("/api/publish", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      },
-      "*"
-    );
+        body: JSON.stringify({
+          listing: {
+            ...listing,
+            attributes: {
+              location: "Palmi",
+            },
+          },
+          subitoTitle: subitoTitle || title,
+        }),
+      });
 
-    // Pubblica su Vinted.
-    window.postMessage(
-      {
-        type: "MTTECH_PUBLISH_VINTED",
-        listing: {
-          ...listing,
-          title: vintedTitle || title,
+      if (!response.ok) {
+        throw new Error(`Errore API pubblicazione: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      setPublishResults(
+        (data.results || []).map((result: any) => ({
+          ...result,
+          pending: false,
+        }))
+      );
+
+      const failed = (data.results || []).find((r: any) => !r.success);
+
+      if (failed) {
+        setStatus("error");
+      } else {
+        setStatus("published");
+      }
+    } catch (err) {
+      setPublishResults([
+        {
+          platform: "SUBITO",
+          success: false,
+          pending: false,
+          error: err instanceof Error ? err.message : "Errore pubblicazione",
         },
-      },
-      "*"
-    );
+      ]);
 
-
+      setStatus("error");
+    }
   }
 
   return (
@@ -727,7 +745,7 @@ export default function NuovoAnnuncioPage() {
               disabled={false}
               className="w-full h-14 rounded-2xl text-white text-base font-semibold bg-black disabled:bg-gray-300 disabled:text-gray-500 mt-6"
             >
-              Pubblica su Subito + Vinted
+              Pubblica su Subito
             </button>
           )}
 

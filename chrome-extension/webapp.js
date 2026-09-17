@@ -71,7 +71,16 @@
   }
 
   function checkStoredResults() {
-    chrome.storage.local.get(
+    if (
+      typeof chrome === "undefined" ||
+      !chrome.storage ||
+      !chrome.storage.local
+    ) {
+      console.warn("MT TECH: chrome.storage non disponibile");
+      return;
+    }
+
+  chrome.storage.local.get(
       [
         "mttechSubitoSuccess",
         "mttechStage",
@@ -123,7 +132,8 @@
     }
   });
 
-  chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (chrome?.storage?.onChanged) {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") return;
 
     if (changes.mttechSubitoSuccess?.newValue === false) {
@@ -184,7 +194,7 @@
       );
     }
   });
-
+} 
   // Recupera anche eventuali conferme avvenute mentre
   // la webapp non stava ricevendo l'evento.
   checkStoredResults();

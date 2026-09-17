@@ -53,7 +53,6 @@ export function PhotoUploader({ onChange }: PhotoUploaderProps) {
           type="file"
           accept="image/*"
           multiple
-          capture="environment"
           className="hidden"
           onChange={handleFilesSelected}
           disabled={photos.length >= MAX_PHOTOS}

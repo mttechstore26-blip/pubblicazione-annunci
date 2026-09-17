@@ -3,5 +3,13 @@
 @tailwind utilities;
 
 html, body {
-  overscroll-behavior-y: none; /* evita l'effetto 'rimbalzo' fastidioso su iPhone */
+  overscroll-behavior-y: none;
+  min-height: 100%;
+}
+
+body {
+  padding-top: max(env(safe-area-inset-top), 18px);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
 }
