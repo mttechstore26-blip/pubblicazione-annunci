@@ -19,15 +19,39 @@ import { VintedMockAdapter } from "./vinted/mock-adapter";
 import { SubitoRealAdapter } from "./subito/real-adapter";
 import { VintedRealAdapter } from "./vinted/real-adapter";
 
+// Gli adapter reali mantengono una sessione browser persistente.
+// Devono quindi essere condivisi tra le richieste API dello stesso processo:
+// creare una nuova istanza a ogni richiesta farebbe tentare a Playwright di
+// aprire più Chromium sullo stesso userDataDir, causando:
+// "Opening in existing browser session".
+let subitoRealAdapter: SubitoRealAdapter | null = null;
+let vintedRealAdapter: VintedRealAdapter | null = null;
+
+function getSubitoRealAdapter(): SubitoRealAdapter {
+  if (!subitoRealAdapter) {
+    subitoRealAdapter = new SubitoRealAdapter();
+  }
+
+  return subitoRealAdapter;
+}
+
+function getVintedRealAdapter(): VintedRealAdapter {
+  if (!vintedRealAdapter) {
+    vintedRealAdapter = new VintedRealAdapter();
+  }
+
+  return vintedRealAdapter;
+}
+
 export function getAdapter(platform: Platform): MarketplaceAdapter {
   if (platform === "SUBITO") {
     const useMock = process.env.MOCK_SUBITO !== "false"; // finto di default finché non diciamo il contrario
-    return useMock ? new SubitoMockAdapter() : new SubitoRealAdapter();
+    return useMock ? new SubitoMockAdapter() : getSubitoRealAdapter();
   }
 
   if (platform === "VINTED") {
     const useMock = process.env.MOCK_VINTED !== "false";
-    return useMock ? new VintedMockAdapter() : new VintedRealAdapter();
+    return useMock ? new VintedMockAdapter() : getVintedRealAdapter();
   }
 
   throw new Error(`Piattaforma sconosciuta: ${platform}`);
